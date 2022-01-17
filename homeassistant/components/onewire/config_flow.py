@@ -1,14 +1,16 @@
 """Config flow for 1-Wire component."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TYPE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_MOUNT_DIR,
@@ -19,6 +21,7 @@ from .const import (
     DEFAULT_SYSBUS_MOUNT_DIR,
     DOMAIN,
 )
+from .model import OWServerDeviceDescription
 from .onewirehub import CannotConnect, InvalidPath, OneWireHub
 
 DATA_SCHEMA_USER = vol.Schema(
@@ -35,6 +38,9 @@ DATA_SCHEMA_MOUNTDIR = vol.Schema(
         vol.Required(CONF_MOUNT_DIR, default=DEFAULT_SYSBUS_MOUNT_DIR): str,
     }
 )
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def validate_input_owserver(
@@ -164,3 +170,168 @@ class OneWireFlowHandler(ConfigFlow, domain=DOMAIN):
             data_schema=DATA_SCHEMA_MOUNTDIR,
             errors=errors,
         )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Get the options flow for this handler."""
+        return OnewireOptionsFlowHandler(config_entry)
+
+
+class OnewireOptionsFlowHandler(OptionsFlow):
+    """Handle OneWire Config options."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize OneWire Network options flow."""
+        self.config_entry = config_entry
+        self.options = dict(config_entry.options)
+        self.controller: OneWireHub
+        self.device_list_ds18b20: list[str] = []
+        self.current_device: str = ""
+        self.devices_to_configure_ds18b20: list[str] = []
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        self.controller = self.hass.data[DOMAIN][self.config_entry.entry_id]
+        # Comment: This list could also be a list of entities instead of devices.
+        #          Perhaps that would be  easier for the user because that enables use of descriptive names
+
+        if self.controller.devices:
+            self.device_list_ds18b20 = [
+                x.id
+                for x in self.controller.devices
+                if isinstance(x, OWServerDeviceDescription) and x.type == "DS18B20"
+            ]
+        _LOGGER.info(
+            "\n---- STEP_INIT ----\n -- Options: %s \n -- User_input: %s",
+            self.options,
+            user_input,
+        )
+
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        return await self.async_step_device_selection(user_input=None)
+
+    async def async_step_device_selection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Select what devices to configure."""
+
+        if user_input is not None:
+            _LOGGER.info(
+                "\n---- STEP_DEVICE_SELECTION ----\n -- Options: %s\n --  User input: %s",
+                self.options,
+                user_input,
+            )
+            self.options.update(user_input)
+            if self.options["clear_device_config"]:
+                self.options = {}
+            else:
+                _LOGGER.info(
+                    "\n---- STEP_DEVICE_SELECTION (In ELSE) ----\n -- Options: %s",
+                    self.options,
+                )
+                self.devices_to_configure_ds18b20 = self.options[
+                    "ds18b20_device_selection"
+                ].copy()
+                if self.devices_to_configure_ds18b20:
+                    return await self.async_step_ds1820b_device_config(user_input=None)
+            return await self._update_options()
+
+        return self.async_show_form(
+            step_id="device_selection",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "clear_device_config",
+                        default=False,
+                    ): bool,
+                    vol.Optional(
+                        "ds18b20_device_selection",
+                        default=self._get_current_ds18b20_config_selection(),
+                        description="Multiselect with list of devices to choose from",
+                    ): cv.multi_select(
+                        {device: False for device in self.device_list_ds18b20}
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_ds1820b_device_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Config options for DS18B20 device."""
+        if user_input is not None:
+            self._update_ds18b20_config_option(self.current_device, user_input)
+            if len(self.devices_to_configure_ds18b20) > 0:
+                return await self.async_step_ds1820b_device_config(user_input=None)
+            else:
+                return await self._update_options()
+        self.current_device = self.devices_to_configure_ds18b20.pop()
+
+        return self.async_show_form(
+            step_id="ds1820b_device_config",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "sensor_precision",
+                        default=self._get_default_ds18b20_config_option(
+                            self.current_device
+                        ),
+                    ): vol.In(["Default", "9 Bits", "10 Bits", "11 Bits", "12 Bits"]),
+                }
+            ),
+            description_placeholders={"sens_id": self.current_device},
+        )
+
+    async def _update_options(self) -> FlowResult:
+        """Update config entry options."""
+        _LOGGER.info(
+            "\n---- UPDATE_OPTIONS  ----\n -- Options: %s",
+            self.options,
+        )
+        return self.async_create_entry(title="", data=self.options)
+
+    def _get_current_ds18b20_config_selection(self) -> list[str] | None:
+        possible_devices = self.device_list_ds18b20
+        selected_entries = self.options.get("ds18b20_device_selection")
+        _LOGGER.info(
+            "\n---- CURRENT_DS18B20_CONFIG_SELECTION  ----\n -- selected_entries: %s\n -- possible_devices: %s",
+            selected_entries,
+            possible_devices,
+        )
+        if selected_entries is None:
+            return []
+        return [device for device in possible_devices if device in selected_entries]
+
+    def _get_default_ds18b20_config_option(self, device: str) -> str:
+        """Get default value for DS18B20 type config."""
+        _LOGGER.info(
+            "\n---- GET_DEFAULT_DS18B20  ----\n -- Options: %s (type) %s",
+            self.options,
+            type(self.options),
+        )
+        sensor_precision_entry: dict[str, str] | None = self.options.get(
+            "sensor_precision"
+        )
+        _LOGGER.info(
+            "\n---- STEP_DEFAULT_DS18B20  ----\n -- Precision entry type: %s",
+            type(sensor_precision_entry),
+        )
+
+        if sensor_precision_entry and device in sensor_precision_entry:
+            return sensor_precision_entry[device]
+        return "Default"
+
+    def _update_ds18b20_config_option(
+        self, device: str, user_input: dict[str, Any]
+    ) -> None:
+        sensor_precision_entry = self.options.get("sensor_precision")
+        if sensor_precision_entry:
+            sensor_precision_entry[device] = user_input["sensor_precision"]
+        else:
+            sensor_precision_entry = {device: user_input["sensor_precision"]}
+        self.options.update({"sensor_precision": sensor_precision_entry})

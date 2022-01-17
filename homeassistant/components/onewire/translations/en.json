@@ -22,5 +22,24 @@
                 "title": "Set up 1-Wire"
             }
         }
-    }
+    },
+    "options": {
+        "step": {
+            "device_selection": {
+                "data": {
+                  "clear_device_config": "Clear all device configurations",
+                  "ds18b20_device_selection": "Select DS1820B Devices to configure"
+                },
+                "description": "Select what configuration steps to process",
+                "title": "OneWire Device Options"
+            },
+            "ds1820b_device_config": {
+                "data": {
+                    "sensor_precision": "Sensor Precision"
+                  },
+                "description": "Select sensor precision for {sens_id}",
+                "title": "OneWire DS18B20 Sensor Precision"
+            }
+        }
+      }
 }
