@@ -331,6 +331,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
         return device_name
 
     def _get_current_ds18b20_config_selection(self) -> list[str] | None:
+        """Get current list of DS18B20 devices that should be configured."""
         possible_devices = self.device_list_ds18b20
         selected_entries = self.options.get("ds18b20_device_selection")
         _LOGGER.info(
