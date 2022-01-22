@@ -10,7 +10,8 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TYPE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers.device_registry import DeviceEntry, DeviceRegistry
 
 from .const import (
     CONF_MOUNT_DIR,
@@ -189,6 +190,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
         self.device_list_ds18b20: list[str] = []
         self.current_device: str = ""
         self.devices_to_configure_ds18b20: list[str] = []
+        self.device_registry: DeviceRegistry | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -197,6 +199,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
         self.controller = self.hass.data[DOMAIN][self.config_entry.entry_id]
         # Comment: This list could also be a list of entities instead of devices.
         #          Perhaps that would be  easier for the user because that enables use of descriptive names
+        self.device_registry = dr.async_get(self.hass)
 
         if self.controller.devices:
             self.device_list_ds18b20 = [
@@ -209,6 +212,16 @@ class OnewireOptionsFlowHandler(OptionsFlow):
             self.options,
             user_input,
         )
+        for device_id in self.device_list_ds18b20:
+            device = self.device_registry.async_get_device({(DOMAIN, device_id)})
+            if not device:
+                break
+            _LOGGER.info(
+                "\n---- STEP_INIT ----\n -- Device : %s -- %s -- %s",
+                device_id,
+                device.name_by_user,
+                device.id,
+            )
 
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -226,7 +239,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
                 self.options,
                 user_input,
             )
-            self.options.update(user_input)
+            self._update_options_dict(user_input)
             if self.options["clear_device_config"]:
                 self.options = {}
             else:
@@ -254,7 +267,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
                         default=self._get_current_ds18b20_config_selection(),
                         description="Multiselect with list of devices to choose from",
                     ): cv.multi_select(
-                        {device: False for device in self.device_list_ds18b20}
+                        {device: False for device in self._get_device_list_with_names()}
                     ),
                 }
             ),
@@ -268,10 +281,8 @@ class OnewireOptionsFlowHandler(OptionsFlow):
             self._update_ds18b20_config_option(self.current_device, user_input)
             if len(self.devices_to_configure_ds18b20) > 0:
                 return await self.async_step_ds1820b_device_config(user_input=None)
-            else:
-                return await self._update_options()
+            return await self._update_options()
         self.current_device = self.devices_to_configure_ds18b20.pop()
-
         return self.async_show_form(
             step_id="ds1820b_device_config",
             data_schema=vol.Schema(
@@ -284,7 +295,9 @@ class OnewireOptionsFlowHandler(OptionsFlow):
                     ): vol.In(["Default", "9 Bits", "10 Bits", "11 Bits", "12 Bits"]),
                 }
             ),
-            description_placeholders={"sens_id": self.current_device},
+            description_placeholders={
+                "sens_id": self._get_device_long_name_from_id(self.current_device)
+            },
         )
 
     async def _update_options(self) -> FlowResult:
@@ -294,6 +307,28 @@ class OnewireOptionsFlowHandler(OptionsFlow):
             self.options,
         )
         return self.async_create_entry(title="", data=self.options)
+
+    def _get_device_list_with_names(self) -> list[str]:
+        possible_devices = self.device_list_ds18b20
+        name_list: list[str] = []
+        for device_id in possible_devices:
+            name_list.append(self._get_device_long_name_from_id(device_id))
+        return name_list
+
+    def _get_device_long_name_from_id(self, current_device: str) -> str:
+        device: DeviceEntry | None
+        if self.device_registry:
+            device = self.device_registry.async_get_device({(DOMAIN, current_device)})
+        else:
+            _LOGGER.error("No device registry in config flow, this is a fatal error")
+        if device and device.name_by_user:
+            return f"{device.name_by_user} ({current_device})"
+        return current_device
+
+    def _get_device_id_from_long_name(self, device_name: str) -> str:
+        if "(" in device_name:
+            return device_name.split("(")[1].replace(")", "")
+        return device_name
 
     def _get_current_ds18b20_config_selection(self) -> list[str] | None:
         possible_devices = self.device_list_ds18b20
@@ -305,7 +340,11 @@ class OnewireOptionsFlowHandler(OptionsFlow):
         )
         if selected_entries is None:
             return []
-        return [device for device in possible_devices if device in selected_entries]
+        return [
+            device
+            for device in self._get_device_list_with_names()
+            if self._get_device_id_from_long_name(device) in selected_entries
+        ]
 
     def _get_default_ds18b20_config_option(self, device: str) -> str:
         """Get default value for DS18B20 type config."""
@@ -329,9 +368,18 @@ class OnewireOptionsFlowHandler(OptionsFlow):
     def _update_ds18b20_config_option(
         self, device: str, user_input: dict[str, Any]
     ) -> None:
+        """Update the options precision entry with the new precision for the actual device."""
         sensor_precision_entry = self.options.get("sensor_precision")
         if sensor_precision_entry:
             sensor_precision_entry[device] = user_input["sensor_precision"]
         else:
             sensor_precision_entry = {device: user_input["sensor_precision"]}
         self.options.update({"sensor_precision": sensor_precision_entry})
+
+    def _update_options_dict(self, user_input: dict[str, Any]) -> None:
+        """Update the local options according to the user input."""
+        if "ds18b20_device_selection" in user_input:
+            name_list = user_input["ds18b20_device_selection"]
+            for index, entry in enumerate(name_list):
+                name_list[index] = self._get_device_id_from_long_name(entry)
+        self.options.update(user_input)
