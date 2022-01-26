@@ -37,6 +37,16 @@ DEVICE_SUPPORT_OWSERVER = {
 }
 DEVICE_SUPPORT_SYSBUS = ["10", "22", "28", "3B", "42"]
 
+PRECISION_MAPPING_DS18B20 = {
+    "Default": "temperature",
+    "9 Bits": "temperature9",
+    "10 Bits": "temperature10",
+    "11 Bits": "temperature11",
+    "12 Bits": "temperature12",
+}
+
+SENSOR_PRECISION_CONFIG_OPTION = "sensor_precision"
+SENSOR_PRECISION_DEVICE_SELECT_OPTION = "ds18b20_device_selection"
 
 MANUFACTURER_MAXIM = "Maxim Integrated"
 MANUFACTURER_HOBBYBOARDS = "Hobby Boards"

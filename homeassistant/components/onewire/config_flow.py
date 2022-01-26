@@ -21,6 +21,9 @@ from .const import (
     DEFAULT_OWSERVER_PORT,
     DEFAULT_SYSBUS_MOUNT_DIR,
     DOMAIN,
+    PRECISION_MAPPING_DS18B20,
+    SENSOR_PRECISION_CONFIG_OPTION,
+    SENSOR_PRECISION_DEVICE_SELECT_OPTION,
 )
 from .model import OWServerDeviceDescription
 from .onewirehub import CannotConnect, InvalidPath, OneWireHub
@@ -248,7 +251,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
                     self.options,
                 )
                 self.devices_to_configure_ds18b20 = self.options[
-                    "ds18b20_device_selection"
+                    SENSOR_PRECISION_DEVICE_SELECT_OPTION
                 ].copy()
                 if self.devices_to_configure_ds18b20:
                     return await self.async_step_ds1820b_device_config(user_input=None)
@@ -263,7 +266,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
                         default=False,
                     ): bool,
                     vol.Optional(
-                        "ds18b20_device_selection",
+                        SENSOR_PRECISION_DEVICE_SELECT_OPTION,
                         default=self._get_current_ds18b20_config_selection(),
                         description="Multiselect with list of devices to choose from",
                     ): cv.multi_select(
@@ -288,11 +291,11 @@ class OnewireOptionsFlowHandler(OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        "sensor_precision",
+                        SENSOR_PRECISION_CONFIG_OPTION,
                         default=self._get_default_ds18b20_config_option(
                             self.current_device
                         ),
-                    ): vol.In(["Default", "9 Bits", "10 Bits", "11 Bits", "12 Bits"]),
+                    ): vol.In(list(PRECISION_MAPPING_DS18B20.keys())),
                 }
             ),
             description_placeholders={
@@ -334,7 +337,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
     def _get_current_ds18b20_config_selection(self) -> list[str] | None:
         """Get current list of DS18B20 devices that should be configured."""
         possible_devices = self.device_list_ds18b20
-        selected_entries = self.options.get("ds18b20_device_selection")
+        selected_entries = self.options.get(SENSOR_PRECISION_DEVICE_SELECT_OPTION)
         _LOGGER.info(
             "\n---- CURRENT_DS18B20_CONFIG_SELECTION  ----\n -- selected_entries: %s\n -- possible_devices: %s",
             selected_entries,
@@ -356,7 +359,7 @@ class OnewireOptionsFlowHandler(OptionsFlow):
             type(self.options),
         )
         sensor_precision_entry: dict[str, str] | None = self.options.get(
-            "sensor_precision"
+            SENSOR_PRECISION_CONFIG_OPTION
         )
         _LOGGER.info(
             "\n---- STEP_DEFAULT_DS18B20  ----\n -- Precision entry type: %s",
@@ -371,17 +374,19 @@ class OnewireOptionsFlowHandler(OptionsFlow):
         self, device: str, user_input: dict[str, Any]
     ) -> None:
         """Update the options precision entry with the new precision for the actual device."""
-        sensor_precision_entry = self.options.get("sensor_precision")
+        sensor_precision_entry = self.options.get(SENSOR_PRECISION_CONFIG_OPTION)
         if sensor_precision_entry:
-            sensor_precision_entry[device] = user_input["sensor_precision"]
+            sensor_precision_entry[device] = user_input[SENSOR_PRECISION_CONFIG_OPTION]
         else:
-            sensor_precision_entry = {device: user_input["sensor_precision"]}
-        self.options.update({"sensor_precision": sensor_precision_entry})
+            sensor_precision_entry = {
+                device: user_input[SENSOR_PRECISION_CONFIG_OPTION]
+            }
+        self.options.update({SENSOR_PRECISION_CONFIG_OPTION: sensor_precision_entry})
 
     def _update_options_dict(self, user_input: dict[str, Any]) -> None:
         """Update the local options according to the user input."""
-        if "ds18b20_device_selection" in user_input:
-            name_list = user_input["ds18b20_device_selection"]
+        if SENSOR_PRECISION_DEVICE_SELECT_OPTION in user_input:
+            name_list = user_input[SENSOR_PRECISION_DEVICE_SELECT_OPTION]
             for index, entry in enumerate(name_list):
                 name_list[index] = self._get_device_id_from_long_name(entry)
         self.options.update(user_input)
