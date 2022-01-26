@@ -325,7 +325,8 @@ class OnewireOptionsFlowHandler(OptionsFlow):
             return f"{device.name_by_user} ({current_device})"
         return current_device
 
-    def _get_device_id_from_long_name(self, device_name: str) -> str:
+    @staticmethod
+    def _get_device_id_from_long_name(device_name: str) -> str:
         if "(" in device_name:
             return device_name.split("(")[1].replace(")", "")
         return device_name
