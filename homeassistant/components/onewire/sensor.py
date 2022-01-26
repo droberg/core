@@ -38,8 +38,10 @@ from .const import (
     DEVICE_KEYS_0_3,
     DEVICE_KEYS_A_B,
     DOMAIN,
+    PRECISION_MAPPING_DS18B20,
     READ_MODE_FLOAT,
     READ_MODE_INT,
+    SENSOR_PRECISION_CONFIG_OPTION,
 )
 from .model import OWDirectDeviceDescription, OWServerDeviceDescription
 from .onewire_entities import (
@@ -352,18 +354,25 @@ async def async_setup_entry(
     """Set up 1-Wire platform."""
     onewirehub = hass.data[DOMAIN][config_entry.entry_id]
     entities = await hass.async_add_executor_job(
-        get_entities, onewirehub, config_entry.data
+        get_entities, onewirehub, config_entry.data, config_entry.options
     )
     async_add_entities(entities, True)
 
 
 def get_entities(
-    onewirehub: OneWireHub, config: MappingProxyType[str, Any]
+    onewirehub: OneWireHub,
+    config: MappingProxyType[str, Any],
+    options: MappingProxyType[str, Any],
 ) -> list[SensorEntity]:
     """Get a list of entities."""
     if not onewirehub.devices:
         return []
 
+    _LOGGER.info(
+        "\n---- GET_ENTITIES ----\n -- Config: %s\n -- Options: %s",
+        config,
+        options,
+    )
     entities: list[SensorEntity] = []
     conf_type = config[CONF_TYPE]
     # We have an owserver on a remote(or local) host/port
@@ -400,6 +409,28 @@ def get_entities(
                         description.device_class = SensorDeviceClass.HUMIDITY
                         description.native_unit_of_measurement = PERCENTAGE
                         description.name = f"Wetness {s_id}"
+                _LOGGER.info(
+                    "\n---- GET_ENTITIES ----\n -- Description: %s",
+                    description,
+                )
+                if (
+                    SENSOR_PRECISION_CONFIG_OPTION in options
+                    and device.id in options[SENSOR_PRECISION_CONFIG_OPTION]
+                ):
+                    sensor_precision_config = options[SENSOR_PRECISION_CONFIG_OPTION][
+                        device.id
+                    ]
+                    if sensor_precision_config in PRECISION_MAPPING_DS18B20:
+                        description = copy.deepcopy(description)
+                        description.override_key = PRECISION_MAPPING_DS18B20[
+                            sensor_precision_config
+                        ]
+                    else:
+                        _LOGGER.debug(
+                            "Invalid sensor precision config for %s: %s",
+                            device.id,
+                            sensor_precision_config,
+                        )
                 device_file = os.path.join(
                     os.path.split(device.path)[0],
                     description.override_key or description.key,
