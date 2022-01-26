@@ -37,7 +37,7 @@ def get_config_entry(hass: HomeAssistant) -> ConfigEntry:
             CONF_HOST: "1.2.3.4",
             CONF_PORT: 1234,
         },
-        options={},
+        options={"sensor_precision": {"28.222222222222": "9 Bits"}},
         entry_id="2",
     )
     config_entry.add_to_hass(hass)
