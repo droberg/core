@@ -54,7 +54,7 @@ async def test_entry_diagnostics(
                 "port": 1234,
                 "type": "OWServer",
             },
-            "options": {},
+            "options": {"28.222222222222": {"sensor_precision": "9 Bits"}},
             "title": "Mock Title",
         },
         "devices": [DEVICE_DETAILS],
