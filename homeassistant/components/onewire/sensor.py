@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping
 import copy
 from dataclasses import dataclass
 import logging
@@ -56,7 +57,18 @@ from .onewirehub import OneWireHub
 class OneWireSensorEntityDescription(OneWireEntityDescription, SensorEntityDescription):
     """Class describing OneWire sensor entities."""
 
-    override_key: str | None = None
+    override_key: Callable[[str, Mapping[str, Any]], str] | None = None
+
+
+def _get_ds18b20_precision(device_id: str, options: Mapping[str, Any]) -> str:
+    """Get DS18B20 form config flow options."""
+    precision = options.get(device_id, {}).get(
+        SENSOR_PRECISION_CONFIG_OPTION, "Default"
+    )
+    if precision_key := PRECISION_MAPPING_DS18B20.get(precision):
+        return precision_key
+    _LOGGER.debug("Invalid sensor precision `%s` for device `%s`", precision, device_id)
+    return "temperature"
 
 
 SIMPLE_TEMPERATURE_SENSOR_DESCRIPTION = OneWireSensorEntityDescription(
@@ -187,7 +199,17 @@ DEVICE_SENSORS: dict[str, tuple[OneWireSensorEntityDescription, ...]] = {
             state_class=SensorStateClass.MEASUREMENT,
         ),
     ),
-    "28": (SIMPLE_TEMPERATURE_SENSOR_DESCRIPTION,),
+    "28": (
+        OneWireSensorEntityDescription(
+            key="temperature",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            name="Temperature",
+            native_unit_of_measurement=TEMP_CELSIUS,
+            override_key=_get_ds18b20_precision,
+            read_mode=READ_MODE_FLOAT,
+            state_class=SensorStateClass.MEASUREMENT,
+        ),
+    ),
     "30": (
         SIMPLE_TEMPERATURE_SENSOR_DESCRIPTION,
         OneWireSensorEntityDescription(
@@ -197,7 +219,7 @@ DEVICE_SENSORS: dict[str, tuple[OneWireSensorEntityDescription, ...]] = {
             name="Thermocouple temperature",
             native_unit_of_measurement=TEMP_CELSIUS,
             read_mode=READ_MODE_FLOAT,
-            override_key="typeK/temperature",
+            override_key=lambda d, o: "typeK/temperature",
             state_class=SensorStateClass.MEASUREMENT,
         ),
         OneWireSensorEntityDescription(
@@ -413,27 +435,12 @@ def get_entities(
                     "\n---- GET_ENTITIES ----\n -- Description: %s",
                     description,
                 )
-                if (
-                    SENSOR_PRECISION_CONFIG_OPTION in options
-                    and device.id in options[SENSOR_PRECISION_CONFIG_OPTION]
-                ):
-                    sensor_precision_config = options[SENSOR_PRECISION_CONFIG_OPTION][
-                        device.id
-                    ]
-                    if sensor_precision_config in PRECISION_MAPPING_DS18B20:
-                        description = copy.deepcopy(description)
-                        description.override_key = PRECISION_MAPPING_DS18B20[
-                            sensor_precision_config
-                        ]
-                    else:
-                        _LOGGER.debug(
-                            "Invalid sensor precision config for %s: %s",
-                            device.id,
-                            sensor_precision_config,
-                        )
+                override_key = None
+                if description.override_key:
+                    override_key = description.override_key(device_id, options)
                 device_file = os.path.join(
                     os.path.split(device.path)[0],
-                    description.override_key or description.key,
+                    override_key or description.key,
                 )
                 name = f"{device_id} {description.name}"
                 entities.append(
